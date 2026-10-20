@@ -64,9 +64,9 @@ public class MainActivity extends Activity {
         header("Kịch bản");
         LinearLayout presets = new LinearLayout(this);
         presets.setOrientation(LinearLayout.VERTICAL);
+        presets.addView(presetBtn("Mẫu: Rời nhóm tự động (vào từng nhóm)", Recipe.PRESET_LEAVE_GROUPS_INSIDE));
+        presets.addView(presetBtn("Mẫu: Rời nhóm (menu ⋯ trong danh sách)", Recipe.PRESET_LEAVE_GROUPS));
         presets.addView(presetBtn("Mẫu: Bỏ theo dõi Trang", Recipe.PRESET_UNFOLLOW_PAGES));
-        presets.addView(presetBtn("Mẫu: Rời nhóm (menu ⋯)", Recipe.PRESET_LEAVE_GROUPS));
-        presets.addView(presetBtn("Mẫu: Rời nhóm (vào từng nhóm)", Recipe.PRESET_LEAVE_GROUPS_INSIDE));
         col.addView(presets);
 
         recipe = new EditText(this);
@@ -81,10 +81,13 @@ public class MainActivity extends Activity {
         col.addView(note(
                 "Cú pháp (mỗi dòng 1 bước):\n" +
                 "* A | B   bước đầu: tìm mục trong danh sách có nút A hoặc B\n" +
+                "* ROW     bước đầu: tự mở lần lượt từng hàng trong danh sách\n" +
+                "! A | B   bỏ qua mục có chữ A hoặc B (vd. nhóm muốn giữ lại)\n" +
                 "A | B     bấm nút A hoặc B (bắt buộc)\n" +
                 "? A | B   bấm nếu có (không bắt buộc)\n" +
                 "~A        khớp khi chữ CHỨA A (không cần giống hệt)\n" +
                 "BACK      bấm Quay lại      WAIT 2   chờ 2 giây\n" +
+                "RETURN    quay lại cho tới khi về đúng danh sách\n" +
                 "# ...     ghi chú"));
 
         header("Tốc độ (càng chậm càng an toàn)");

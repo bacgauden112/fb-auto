@@ -16,7 +16,7 @@ import java.util.Locale;
  *   # ...     ghi chú
  */
 public class Recipe {
-    public static final int TARGET = 0, CLICK = 1, BACK = 2, WAIT = 3;
+    public static final int TARGET = 0, CLICK = 1, BACK = 2, WAIT = 3, RETURN = 4;
 
     public static class Step {
         public int type;
@@ -24,6 +24,19 @@ public class Recipe {
         public long waitMs;
         public final List<String> exact = new ArrayList<>();
         public final List<String> contains = new ArrayList<>();
+        /** Bước chọn mục kiểu ROW: tự chọn từng hàng trong danh sách, không cần tên nút. */
+        public boolean row;
+        /** Bỏ qua mục có chữ chứa một trong các từ này (dòng '!'). */
+        public final List<String> skip = new ArrayList<>();
+
+        public boolean skipped(String t) {
+            for (String k : skip) if (t.contains(k)) return true;
+            return false;
+        }
+
+        public boolean matchesExact(String t) {
+            return t != null && !t.isEmpty() && exact.contains(t);
+        }
 
         public boolean matches(String t) {
             if (t == null || t.isEmpty()) return false;
@@ -41,14 +54,24 @@ public class Recipe {
 
     public static List<Step> parse(String text) {
         List<Step> steps = new ArrayList<>();
+        List<String> skip = new ArrayList<>();
         if (text == null) return steps;
         for (String raw : text.split("\\r?\\n")) {
             String line = raw.trim();
             if (line.isEmpty() || line.startsWith("#")) continue;
             Step s = new Step();
             String upper = line.toUpperCase(Locale.ROOT);
+            if (line.startsWith("!")) {
+                for (String part : line.substring(1).split("\\|")) {
+                    String k = norm(part);
+                    if (!k.isEmpty()) skip.add(k);
+                }
+                continue;
+            }
             if (upper.equals("BACK")) {
                 s.type = BACK;
+            } else if (upper.equals("RETURN")) {
+                s.type = RETURN;
             } else if (upper.startsWith("WAIT")) {
                 s.type = WAIT;
                 try {
@@ -61,6 +84,11 @@ public class Recipe {
                 if (line.startsWith("*")) {
                     s.type = TARGET;
                     line = line.substring(1).trim();
+                    if (line.equalsIgnoreCase("ROW")) {
+                        s.row = true;
+                        steps.add(s);
+                        continue;
+                    }
                 } else if (line.startsWith("?")) {
                     s.optional = true;
                     line = line.substring(1).trim();
@@ -91,6 +119,7 @@ public class Recipe {
         for (int i = 0; i < steps.size(); i++) {
             if (steps.get(i).type == TARGET) {
                 if (i > 0) steps.add(0, steps.remove(i));
+                steps.get(0).skip.addAll(skip);
                 break;
             }
         }
@@ -115,14 +144,16 @@ public class Recipe {
             "? Rời nhóm | Leave group | Rời khỏi nhóm | Leave\n";
 
     public static final String PRESET_LEAVE_GROUPS_INSIDE =
-            "# RỜI NHÓM (cách 2: vào từng nhóm)\n" +
-            "# Mở danh sách nhóm. Mỗi lượt: mở nhóm → bấm 'Đã tham gia' → Rời nhóm → quay lại.\n" +
-            "# Dòng '*' cần là tên nút/ô của từng nhóm trong danh sách — dùng 🔍 để dò rồi sửa.\n" +
-            "* ~Ảnh đại diện của nhóm | ~Group profile picture\n" +
-            "WAIT 2\n" +
+            "# RỜI NHÓM TỰ ĐỘNG (vào từng nhóm)\n" +
+            "# Mở Facebook → Menu → Nhóm → 'Nhóm của bạn' (danh sách nhóm đã tham gia), rồi bấm ▶.\n" +
+            "# Tool tự mở từng nhóm → 'Đã tham gia' → 'Rời nhóm' → xác nhận → quay lại danh sách.\n" +
+            "# Dòng '!' = bỏ qua mục có chữ này. Thêm tên nhóm muốn GIỮ LẠI vào dòng '!'.\n" +
+            "! Tạo nhóm | Khám phá | Xem tất cả | Create group | Discover | See all | Quản trị viên\n" +
+            "* ROW\n" +
+            "WAIT 3\n" +
             "Đã tham gia | Joined | ~Đã tham gia\n" +
             "~Rời nhóm | ~Leave group\n" +
-            "? Rời nhóm | Leave group | Rời khỏi nhóm\n" +
+            "? Rời nhóm | Leave group | Rời khỏi nhóm | Leave\n" +
             "WAIT 2\n" +
-            "BACK\n";
+            "RETURN\n";
 }

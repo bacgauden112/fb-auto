@@ -48,6 +48,7 @@ public class AutoService extends AccessibilityService {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Random rnd = new Random();
     private final Set<String> done = new HashSet<>();
+    private final Set<String> doneNames = new HashSet<>();
     private final LinkedList<String> logs = new LinkedList<>();
 
     private volatile boolean running;
@@ -231,6 +232,7 @@ public class AutoService extends AccessibilityService {
 
     private void loop(Config c, List<Recipe.Step> steps) throws InterruptedException {
         done.clear();
+        doneNames.clear();
         int fails = 0, endCount = 0;
         Recipe.Step first = steps.get(0);
 
@@ -252,10 +254,14 @@ public class AutoService extends AccessibilityService {
             }
             endCount = 0;
 
-            String key = keyOf(target, first);
+            String key = first.row ? rowKey(target, first) : keyOf(target, first);
             done.add(key);
+            if (first.row) doneNames.add(firstText(key));
             String name = shortName(key);
             String before = signature();
+            // Chữ của vài mục khác trong danh sách — dùng để nhận ra đã quay về danh sách chưa
+            List<String> anchors = first.row ? rowAnchors(first, key) : new ArrayList<>();
+            status("→ " + name);
 
             click(target);
             nap(rand(800, 1400));
@@ -270,6 +276,10 @@ public class AutoService extends AccessibilityService {
                 }
                 if (s.type == Recipe.WAIT) {
                     nap(s.waitMs);
+                    continue;
+                }
+                if (s.type == Recipe.RETURN) {
+                    returnToList(anchors);
                     continue;
                 }
                 AccessibilityNodeInfo n = waitFor(s, s.optional ? c.optionalTimeoutMs : c.stepTimeoutMs);
@@ -296,8 +306,10 @@ public class AutoService extends AccessibilityService {
             } else {
                 fails++;
                 status("✗ Không làm được: " + name);
-                // Chỉ bấm Quay lại nếu có gì đó (menu/hộp thoại) đã mở ra
-                if (!before.equals(signature())) {
+                if (!anchors.isEmpty()) {
+                    returnToList(anchors);
+                } else if (!before.equals(signature())) {
+                    // Chỉ bấm Quay lại nếu có gì đó (menu/hộp thoại) đã mở ra
                     performGlobalAction(GLOBAL_ACTION_BACK);
                     nap(1000);
                 }
@@ -399,12 +411,17 @@ public class AutoService extends AccessibilityService {
     }
 
     private AccessibilityNodeInfo findTarget(Recipe.Step s) {
+        if (s.row) {
+            List<AccessibilityNodeInfo> rows = rowCandidates(s);
+            return rows.isEmpty() ? null : rows.get(0);
+        }
         AccessibilityNodeInfo best = null;
         int bestTop = Integer.MAX_VALUE;
         Rect b = new Rect();
         for (AccessibilityNodeInfo n : allNodes()) {
             if (!matches(n, s) || !visible(n)) continue;
-            if (done.contains(keyOf(n, s))) continue;
+            String k = keyOf(n, s);
+            if (done.contains(k) || s.skipped(k)) continue;
             n.getBoundsInScreen(b);
             if (b.top < bestTop) { bestTop = b.top; best = n; }
         }
@@ -414,7 +431,12 @@ public class AutoService extends AccessibilityService {
     private AccessibilityNodeInfo waitFor(Recipe.Step s, long timeoutMs) throws InterruptedException {
         long end = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < end) {
-            for (AccessibilityNodeInfo n : allNodes()) {
+            List<AccessibilityNodeInfo> all = allNodes();
+            for (AccessibilityNodeInfo n : all) {
+                if ((s.matchesExact(Recipe.norm(n.getText())) || s.matchesExact(Recipe.norm(n.getContentDescription())))
+                        && visible(n)) return n;
+            }
+            for (AccessibilityNodeInfo n : all) {
                 if (matches(n, s) && visible(n)) return n;
             }
             nap(250);
@@ -447,8 +469,122 @@ public class AutoService extends AccessibilityService {
         return sb.toString();
     }
 
+    // ---------- chế độ ROW: tự chọn từng hàng trong danh sách ----------
+
+    /** Danh sách cuộn lớn nhất đang hiển thị (thường là danh sách chính). */
+    private AccessibilityNodeInfo mainList() {
+        AccessibilityNodeInfo best = null;
+        long bestArea = 0;
+        Rect b = new Rect();
+        for (AccessibilityNodeInfo n : allNodes()) {
+            if (!n.isScrollable() || !visible(n)) continue;
+            n.getBoundsInScreen(b);
+            long area = (long) b.width() * b.height();
+            if (area > bestArea) { bestArea = area; best = n; }
+        }
+        return best;
+    }
+
+    /** Các hàng bấm được trong danh sách chính, chưa xử lý, xếp từ trên xuống. */
+    private List<AccessibilityNodeInfo> rowCandidates(Recipe.Step s) {
+        List<AccessibilityNodeInfo> out = new ArrayList<>();
+        AccessibilityNodeInfo list = mainList();
+        if (list == null) return out;
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        Rect lb = new Rect();
+        list.getBoundsInScreen(lb);
+        final List<int[]> tops = new ArrayList<>();
+        Rect b = new Rect();
+        for (AccessibilityNodeInfo n : nodes(list, 1500)) {
+            if (n == list || !n.isClickable() || !visible(n)) continue;
+            n.getBoundsInScreen(b);
+            if (b.width() < dm.widthPixels * 0.3 || b.height() < dp(40)) continue;
+            if (b.top < lb.top - 2 || b.bottom > lb.bottom + dp(4)) continue; // bị che một phần
+            String k = rowKey(n, s);
+            if (k.length() <= 4 || done.contains(k) || s.skipped(k) || doneNames.contains(firstText(k))) continue;
+            out.add(n);
+            tops.add(new int[]{b.top, -b.width() * b.height()});
+        }
+        // Bỏ các ô nằm lọt trong một ô khác (giữ ô ngoài cùng = cả hàng)
+        List<Rect> rects = new ArrayList<>();
+        for (AccessibilityNodeInfo n : out) { Rect r = new Rect(); n.getBoundsInScreen(r); rects.add(r); }
+        for (int i = out.size() - 1; i >= 0; i--) {
+            for (int j = 0; j < out.size(); j++) {
+                if (i != j && rects.get(j).contains(rects.get(i)) && !rects.get(j).equals(rects.get(i))) {
+                    out.remove(i); tops.remove(i); rects.remove(i);
+                    break;
+                }
+            }
+        }
+        // Sắp theo vị trí từ trên xuống; cùng hàng thì ưu tiên ô lớn hơn
+        Integer[] idx = new Integer[out.size()];
+        for (int i = 0; i < idx.length; i++) idx[i] = i;
+        java.util.Arrays.sort(idx, (x, y) -> tops.get(x)[0] != tops.get(y)[0]
+                ? Integer.compare(tops.get(x)[0], tops.get(y)[0])
+                : Integer.compare(tops.get(x)[1], tops.get(y)[1]));
+        List<AccessibilityNodeInfo> sorted = new ArrayList<>();
+        for (Integer i : idx) sorted.add(out.get(i));
+        return sorted;
+    }
+
+    private String rowKey(AccessibilityNodeInfo n, Recipe.Step s) {
+        StringBuilder sb = new StringBuilder("row:");
+        for (AccessibilityNodeInfo c : nodes(n, 40)) {
+            String t = Recipe.norm(c.getText());
+            if (t.isEmpty()) t = Recipe.norm(c.getContentDescription());
+            if (t.isEmpty()) continue;
+            sb.append(t).append(" | ");
+            if (sb.length() > 120) break;
+        }
+        return sb.toString();
+    }
+
+    private List<String> rowAnchors(Recipe.Step s, String exceptKey) {
+        List<String> a = new ArrayList<>();
+        AccessibilityNodeInfo list = mainList();
+        if (list == null) return a;
+        for (AccessibilityNodeInfo n : nodes(list, 1500)) {
+            String t = Recipe.norm(n.getText());
+            if (t.length() < 3 || exceptKey.contains(t) || a.contains(t)) continue;
+            a.add(t);
+            if (a.size() >= 8) break;
+        }
+        return a;
+    }
+
+    private boolean onList(List<String> anchors) {
+        int hits = 0;
+        for (AccessibilityNodeInfo n : allNodes()) {
+            String t = Recipe.norm(n.getText());
+            if (!t.isEmpty() && anchors.contains(t) && ++hits >= 2) return true;
+        }
+        return false;
+    }
+
+    /** Bấm Quay lại (tối đa 4 lần) cho đến khi thấy lại danh sách ban đầu. */
+    private void returnToList(List<String> anchors) throws InterruptedException {
+        if (anchors.isEmpty()) {
+            performGlobalAction(GLOBAL_ACTION_BACK);
+            nap(1500);
+            return;
+        }
+        for (int i = 0; i < 4; i++) {
+            if (onList(anchors)) return;
+            performGlobalAction(GLOBAL_ACTION_BACK);
+            nap(1600);
+        }
+        if (!onList(anchors)) status("⚠ Không chắc đã quay về danh sách");
+    }
+
+    private static String firstText(String key) {
+        if (key.startsWith("row:")) key = key.substring(4);
+        int i = key.indexOf(" | ");
+        return i > 0 ? key.substring(0, i) : key;
+    }
+
     private static String shortName(String key) {
         if (key.startsWith("#")) return "(mục)";
+        if (key.startsWith("row:")) key = key.substring(4);
         int i = key.indexOf(" | ");
         String s = i > 0 ? key.substring(0, i) : key;
         return s.length() > 32 ? s.substring(0, 32) + "…" : s;

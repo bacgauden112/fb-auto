@@ -35,11 +35,14 @@ Mở thư mục `fb-auto` bằng Android Studio → Build → Build APK(s).
 ### Cú pháp kịch bản
 ```
 * A | B     bước đầu: tìm mục trong danh sách có nút A hoặc B
+* ROW       bước đầu: tự mở lần lượt từng hàng trong danh sách
+! A | B     bỏ qua mục có chữ A hoặc B (vd. nhóm muốn giữ lại)
 A | B       bấm nút A hoặc B (bắt buộc)
 ? A | B     bấm nếu có (không bắt buộc)
 ~A          khớp khi chữ CHỨA A
 BACK        bấm Quay lại
 WAIT 2      chờ 2 giây
+RETURN      quay lại cho tới khi về đúng danh sách
 # ...       ghi chú
 ```
 
