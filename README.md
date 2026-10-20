@@ -9,7 +9,8 @@ rời nhóm, bỏ theo dõi Trang… Có nút nổi ▶/■ để chạy/dừng 
 1. Tạo repo mới trên github.com (để Private cũng được).
 2. Bấm **uploading an existing file**, kéo **toàn bộ nội dung** thư mục `fb-auto` vào (gồm cả thư mục `.github`).
    - Nếu máy ẩn thư mục `.github`: tạo file mới trên GitHub tên `.github/workflows/build.yml` và dán nội dung file đó vào.
-3. Vào tab **Actions** → chờ "Build APK" chạy xong (~3–5 phút) → bấm vào lần chạy → tải **FBAuto-apk** (file zip chứa `app-debug.apk`).
+3. Vào tab **Actions** → chờ "Build APK" chạy xong (~3–5 phút).
+4. Vào mục **Releases** (cột phải trang repo) → bản **latest** → tải `FBAuto.apk`.
 
 ### Cách B — Android Studio
 Mở thư mục `fb-auto` bằng Android Studio → Build → Build APK(s).
