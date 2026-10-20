@@ -13,17 +13,26 @@ import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+
 public class MainActivity extends Activity {
 
     private EditText recipe, minDelay, maxDelay, maxCount, pauseEvery, pauseMinutes;
     private TextView svcStatus, logView, dumpView;
-    private LinearLayout col;
+    private LinearLayout col, pickerBox;
+    private ScrollView sv;
+    private TextView pickerHeader, pickerCount;
+    private final List<CheckBox> boxes = new ArrayList<>();
 
     private int dp(int v) {
         return Math.round(v * getResources().getDisplayMetrics().density);
@@ -33,7 +42,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        ScrollView sv = new ScrollView(this);
+        sv = new ScrollView(this);
         sv.setBackgroundColor(Color.WHITE);
         col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
@@ -60,6 +69,41 @@ public class MainActivity extends Activity {
                 "2. Chọn kịch bản bên dưới → Lưu.\n" +
                 "3. Mở Facebook, vào đúng màn hình danh sách, bấm ▶ trên nút nổi. Bấm ■ để dừng.\n" +
                 "4. Nếu không chạy: mở màn hình cần bấm, bấm 🔍 để dò tên nút, quay lại đây xem và sửa kịch bản."));
+
+        // ---------- chọn nhóm ----------
+        pickerHeader = header("Chọn nhóm để rời");
+        col.addView(note(
+                "1. Mở Facebook → Menu → Nhóm → 'Nhóm của bạn', bấm 📋 trên nút nổi để quét.\n" +
+                "2. Tick các nhóm muốn rời → 'Lưu & mở Facebook' → bấm ▶.\n" +
+                "Khi đã có danh sách quét, ▶ CHỈ rời các nhóm được tick. " +
+                "Bấm 'Xóa danh sách quét' để quay về chế độ rời tất cả."));
+        pickerCount = text("", 14);
+        pickerCount.setTypeface(Typeface.DEFAULT_BOLD);
+        col.addView(pickerCount);
+        LinearLayout pickBtns = new LinearLayout(this);
+        pickBtns.setOrientation(LinearLayout.HORIZONTAL);
+        Button all = button("Chọn tất cả");
+        all.setOnClickListener(v -> { for (CheckBox b : boxes) b.setChecked(true); });
+        Button none = button("Bỏ chọn hết");
+        none.setOnClickListener(v -> { for (CheckBox b : boxes) b.setChecked(false); });
+        pickBtns.addView(all, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        pickBtns.addView(none, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        col.addView(pickBtns);
+        pickerBox = new LinearLayout(this);
+        pickerBox.setOrientation(LinearLayout.VERTICAL);
+        col.addView(pickerBox);
+        Button saveSel = button("Lưu lựa chọn & mở Facebook");
+        saveSel.setOnClickListener(v -> {
+            saveSelection();
+            openFacebook();
+        });
+        col.addView(saveSel);
+        Button clearScan = button("Xóa danh sách quét");
+        clearScan.setOnClickListener(v -> {
+            Config.prefs(this).edit().remove("scanned").remove("selected").apply();
+            refreshPicker();
+        });
+        col.addView(clearScan);
 
         header("Kịch bản");
         LinearLayout presets = new LinearLayout(this);
@@ -128,6 +172,67 @@ public class MainActivity extends Activity {
         SharedPreferences p = Config.prefs(this);
         logView.setText(p.getString("runlog", "(chưa có)"));
         dumpView.setText(p.getString("dump", "(chưa dò lần nào)"));
+        refreshPicker();
+        if (getIntent() != null && getIntent().getBooleanExtra("showPicker", false)) {
+            getIntent().removeExtra("showPicker");
+            sv.post(() -> sv.smoothScrollTo(0, pickerHeader.getTop()));
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+    }
+
+    // ---------- danh sách chọn nhóm ----------
+
+    private void refreshPicker() {
+        boxes.clear();
+        pickerBox.removeAllViews();
+        List<String[]> items = Config.loadScanned(this);
+        Set<String> sel = Config.loadSelected(this);
+        if (items.isEmpty()) {
+            pickerBox.addView(note("(Chưa quét — ▶ sẽ rời TẤT CẢ nhóm, trừ các nhóm ở dòng '!')"));
+        }
+        for (String[] it : items) {
+            CheckBox cb = new CheckBox(this);
+            String key = Recipe.norm(it[0]);
+            cb.setTag(key);
+            cb.setText(it[1].isEmpty() ? it[0] : it[0] + "\n" + it[1]);
+            cb.setTextSize(14);
+            cb.setPadding(0, dp(6), 0, dp(6));
+            cb.setChecked(sel.contains(key));
+            cb.setOnCheckedChangeListener((b, c) -> updateCount());
+            boxes.add(cb);
+            pickerBox.addView(cb);
+        }
+        updateCount();
+    }
+
+    private void updateCount() {
+        int n = 0;
+        for (CheckBox b : boxes) if (b.isChecked()) n++;
+        pickerCount.setText(boxes.isEmpty() ? "" : "Đã chọn " + n + " / " + boxes.size() + " nhóm");
+    }
+
+    private void saveSelection() {
+        Set<String> sel = new LinkedHashSet<>();
+        for (CheckBox b : boxes) if (b.isChecked()) sel.add((String) b.getTag());
+        Config.saveSelected(this, sel);
+        // Đảm bảo đang dùng kịch bản rời nhóm kiểu ROW
+        if (!recipe.getText().toString().toUpperCase().contains("ROW")) {
+            recipe.setText(Recipe.PRESET_LEAVE_GROUPS_INSIDE);
+        }
+        save(false);
+        Toast.makeText(this, "Đã lưu " + sel.size() + " nhóm. Vào lại 'Nhóm của bạn' rồi bấm ▶", Toast.LENGTH_LONG).show();
+    }
+
+    private void openFacebook() {
+        for (String pkg : AutoService.FB_PACKAGES) {
+            Intent i = getPackageManager().getLaunchIntentForPackage(pkg);
+            if (i != null) { startActivity(i); return; }
+        }
     }
 
     @Override
@@ -191,11 +296,12 @@ public class MainActivity extends Activity {
         return t;
     }
 
-    private void header(String s) {
+    private TextView header(String s) {
         TextView t = text(s, 17);
         t.setTypeface(Typeface.DEFAULT_BOLD);
         t.setPadding(0, dp(20), 0, dp(6));
         col.addView(t);
+        return t;
     }
 
     private Button button(String s) {

@@ -27,6 +27,12 @@ Mở thư mục `fb-auto` bằng Android Studio → Build → Build APK(s).
 2. Mở Facebook, vào đúng màn hình danh sách (ví dụ: Nhóm của bạn / Trang đang theo dõi).
 3. Bấm **▶** trên nút nổi. Bấm **■** để dừng.
 
+## Rời nhiều nhóm theo danh sách chọn
+1. Mở Facebook → Menu → Nhóm → **Nhóm của bạn**, bấm **📋** trên nút nổi: tool cuộn hết danh sách và ghi lại tên nhóm.
+2. App FB Auto tự mở phần **Chọn nhóm để rời** → tick các nhóm muốn rời → **Lưu lựa chọn & mở Facebook**.
+3. Ở màn hình *Nhóm của bạn*, bấm **▶**. Tool chỉ rời các nhóm đã tick; nhóm rời xong tự biến khỏi danh sách.
+4. **Xóa danh sách quét** để quay về chế độ rời tất cả.
+
 ## 4. Khi kịch bản không chạy (Facebook đổi giao diện)
 1. Mở đúng màn hình (hoặc mở menu ⋯ / hộp xác nhận), bấm **🔍**.
 2. Quay lại app FB Auto → phần **Kết quả dò màn hình** sẽ liệt kê chữ và mô tả của từng nút (`[C]` = bấm được).

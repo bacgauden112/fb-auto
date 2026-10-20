@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Path;
 import android.graphics.PixelFormat;
@@ -29,6 +30,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
@@ -37,7 +39,7 @@ import java.util.Set;
 
 public class AutoService extends AccessibilityService {
 
-    static final String[] FB_PACKAGES = {"com.facebook.katana", "com.facebook.lite"};
+    public static final String[] FB_PACKAGES = {"com.facebook.katana", "com.facebook.lite"};
     static final String[] LIMIT_WORDS = {
             "thử lại sau", "try again later", "tạm thời bị chặn", "temporarily blocked",
             "hạn chế hoạt động", "we limit how often"
@@ -49,6 +51,8 @@ public class AutoService extends AccessibilityService {
     private final Random rnd = new Random();
     private final Set<String> done = new HashSet<>();
     private final Set<String> doneNames = new HashSet<>();
+    /** Nếu khác null: chỉ xử lý các nhóm có tên (chuẩn hóa) nằm trong tập này. */
+    private volatile Set<String> onlyNames;
     private final LinkedList<String> logs = new LinkedList<>();
 
     private volatile boolean running;
@@ -133,9 +137,14 @@ public class AutoService extends AccessibilityService {
         });
         Button dumpBtn = smallBtn("🔍");
         dumpBtn.setOnClickListener(v -> dumpScreen());
+        Button scanBtn = smallBtn("📋");
+        scanBtn.setOnClickListener(v -> {
+            if (running) stopRun(); else startScan();
+        });
 
         box.addView(statusView);
         box.addView(runBtn);
+        box.addView(scanBtn);
         box.addView(dumpBtn);
 
         final WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
@@ -234,9 +243,22 @@ public class AutoService extends AccessibilityService {
         done.clear();
         doneNames.clear();
         int fails = 0, endCount = 0;
+        boolean wrapped = false;
         Recipe.Step first = steps.get(0);
+        // Đã quét danh sách -> chỉ xử lý các nhóm được tick
+        Set<String> sel = Config.loadSelected(this);
+        boolean hasScan = !Config.loadScanned(this).isEmpty();
+        onlyNames = (first.row && hasScan) ? sel : null;
+        if (onlyNames != null) {
+            if (onlyNames.isEmpty()) { lastMsg = "Chưa tick nhóm nào trong app FB Auto"; return; }
+            status("Chỉ rời " + onlyNames.size() + " nhóm đã chọn");
+        }
 
         while (running && count < c.maxCount) {
+            if (onlyNames != null && doneNames.containsAll(onlyNames)) {
+                lastMsg = "Đã xử lý hết các nhóm đã chọn";
+                return;
+            }
             waitForFacebook();
 
             AccessibilityNodeInfo target = findTarget(first);
@@ -246,7 +268,17 @@ public class AutoService extends AccessibilityService {
                 scrollForward();
                 nap(2000);
                 if (before.equals(signature())) {
-                    if (++endCount >= 3) { lastMsg = "Hết mục trong danh sách"; return; }
+                    if (++endCount >= 3) {
+                        if (onlyNames != null && !wrapped) {
+                            status("Cuộn lên đầu tìm các nhóm còn lại...");
+                            scrollToTop();
+                            wrapped = true;
+                            endCount = 0;
+                            continue;
+                        }
+                        lastMsg = onlyNames != null ? "Không tìm thấy một số nhóm đã chọn" : "Hết mục trong danh sách";
+                        return;
+                    }
                 } else {
                     endCount = 0;
                 }
@@ -302,6 +334,7 @@ public class AutoService extends AccessibilityService {
             if (ok) {
                 count++;
                 fails = 0;
+                if (first.row) Config.removeGroup(this, firstText(key));
                 status("✓ " + name);
             } else {
                 fails++;
@@ -502,6 +535,7 @@ public class AutoService extends AccessibilityService {
             if (b.top < lb.top - 2 || b.bottom > lb.bottom + dp(4)) continue; // bị che một phần
             String k = rowKey(n, s);
             if (k.length() <= 4 || done.contains(k) || s.skipped(k) || doneNames.contains(firstText(k))) continue;
+            if (onlyNames != null && !onlyNames.contains(firstText(k))) continue;
             out.add(n);
             tops.add(new int[]{b.top, -b.width() * b.height()});
         }
@@ -654,6 +688,109 @@ public class AutoService extends AccessibilityService {
         }
         if (best != null && best.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) return;
         swipeUp();
+    }
+
+    // ================= quét danh sách nhóm =================
+
+    void startScan() {
+        if (running) return;
+        running = true;
+        worker = new Thread(() -> {
+            try {
+                scan();
+            } catch (InterruptedException ignored) {
+                lastMsg = "Đã dừng quét";
+            } catch (Exception e) {
+                lastMsg = "Lỗi: " + e;
+            } finally {
+                running = false;
+                status("■ " + lastMsg);
+            }
+        }, "fbauto-scan");
+        worker.start();
+        status("Bắt đầu quét...");
+    }
+
+    private void scan() throws InterruptedException {
+        waitForFacebook();
+        Recipe.Step rowStep = new Recipe.Step();
+        rowStep.row = true;
+        List<Recipe.Step> steps = Recipe.parse(Config.load(this).recipe);
+        if (!steps.isEmpty()) rowStep.skip.addAll(steps.get(0).skip);
+        done.clear();
+        doneNames.clear();
+        onlyNames = null;
+
+        LinkedHashMap<String, String[]> found = new LinkedHashMap<>();
+        int same = 0;
+        while (running && same < 3) {
+            for (AccessibilityNodeInfo n : rowCandidates(rowStep)) {
+                String[] t = rowTexts(n);
+                String k = Recipe.norm(t[0]);
+                if (!k.isEmpty() && !found.containsKey(k)) found.put(k, t);
+            }
+            status("Đang quét: " + found.size() + " nhóm...");
+            String sig = signature();
+            scrollForward();
+            nap(1800);
+            if (sig.equals(signature())) same++; else same = 0;
+        }
+        if (found.isEmpty()) {
+            lastMsg = "Không thấy nhóm nào — hãy mở 'Nhóm của bạn' rồi quét lại";
+            return;
+        }
+        Config.saveScanned(this, new ArrayList<>(found.values()));
+        // Giữ lại các lựa chọn cũ còn tồn tại
+        Set<String> sel = Config.loadSelected(this);
+        sel.retainAll(found.keySet());
+        Config.saveSelected(this, sel);
+
+        status("Quét xong " + found.size() + " nhóm — đang cuộn lên đầu...");
+        scrollToTop();
+        lastMsg = "Quét xong " + found.size() + " nhóm — chọn nhóm trong app FB Auto";
+        try {
+            Intent i = new Intent(this, MainActivity.class);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            i.putExtra("showPicker", true);
+            startActivity(i);
+        } catch (Exception e) {
+            toast("Quét xong. Mở app FB Auto để chọn nhóm.");
+        }
+    }
+
+    /** 2 dòng chữ đầu tiên của 1 hàng (giữ nguyên chữ hoa/thường). */
+    private String[] rowTexts(AccessibilityNodeInfo n) {
+        String[] r = {"", ""};
+        int k = 0;
+        for (AccessibilityNodeInfo c : nodes(n, 40)) {
+            CharSequence t = c.getText();
+            if (t == null || Recipe.norm(t).isEmpty()) t = c.getContentDescription();
+            if (t == null || Recipe.norm(t).isEmpty()) continue;
+            r[k++] = t.toString().replaceAll("\\s+", " ").trim();
+            if (k == 2) break;
+        }
+        return r;
+    }
+
+    private void scrollToTop() throws InterruptedException {
+        for (int i = 0; i < 40 && running; i++) {
+            String sig = signature();
+            AccessibilityNodeInfo list = mainList();
+            if (list == null || !list.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) swipeDown();
+            nap(700);
+            if (sig.equals(signature())) return;
+        }
+    }
+
+    private void swipeDown() {
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        Path p = new Path();
+        p.moveTo(dm.widthPixels / 2f, dm.heightPixels * 0.35f);
+        p.lineTo(dm.widthPixels / 2f, dm.heightPixels * 0.8f);
+        GestureDescription g = new GestureDescription.Builder()
+                .addStroke(new GestureDescription.StrokeDescription(p, 0, 300))
+                .build();
+        dispatchGesture(g, null, null);
     }
 
     // ================= dò màn hình =================
