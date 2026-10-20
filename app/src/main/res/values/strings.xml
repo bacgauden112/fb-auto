@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="a11y_desc">FB Auto đọc giao diện app Facebook và tự bấm các nút theo kịch bản bạn đặt (ví dụ: rời nhóm, bỏ theo dõi Trang). App chỉ thao tác khi bạn bấm ▶ trên nút nổi, và không gửi dữ liệu đi đâu.</string>
+</resources>
